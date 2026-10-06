@@ -2,7 +2,11 @@
 *.pcap.gz
 *.pcapng
 captures/
+campagne/
+runs/
 packets_net*.csv
 __pycache__/
 *.pyc
-config.env
+.fwpass
+tools/sendpkts/sendpkts
+tools/udpramp/udpramp
