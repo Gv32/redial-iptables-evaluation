@@ -1,0 +1,8 @@
+*.pcap
+*.pcap.gz
+*.pcapng
+captures/
+packets_net*.csv
+__pycache__/
+*.pyc
+config.env
