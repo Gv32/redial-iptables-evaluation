@@ -21,9 +21,7 @@ gcc -O3 -Wall -o sendpkts sendpkts.c -lrt
 ```
 
 Only the standard C library is needed. The binary used in the thesis campaigns was built with
-this exact command on TS-P5 (MD5 `1a0735506c4b2366d7039b7f725117cc`; a different gcc
-version may produce a different hash).
-
+this exact command on TS-P5
 ## Usage
 
 ```bash
