@@ -83,25 +83,3 @@ python3 gen_fw_rules_v6.py --seed 42 --order n2n1 --limit 601 --net-ratio 25,75 
 python3 gen_packets_v2.py -r fw12575.rules --count 10000 --seed 42
 ```
 
-## Known pitfalls
-
-- **Always regenerate the packet vectors** (`gen_packets_v2.py`) after changing the ruleset.
-- With `--no-final-log` the totals drop by 1 (601 → 600): update `--pre-rules`/`--post-rules`
-  in the campaign scripts and the expected count in `load-fw.sh`.
-- Wildcard ports available: 50. With `pairs` each port uses 2 rules (so `--wildcard-rules 50`
-  = 25 ports). An odd value with `pairs` is rounded down.
-- If the warning "candidati insufficienti" appears, raise `--variants`.
-- The first header line contains the generation timestamp: when comparing two rulesets,
-  ignore lines starting with `#`.
-- Source comments and messages are in Italian.
-
-## Version history
-
-| Version | Change |
-| --- | --- |
-| v4 | base generator (wildcards always DROP) |
-| v5 | `--wildcard-action {deny,accept}` |
-| v6 | `--order mixed` proportional to \|net1\|:\|net2\| (v5 alternated 1:1); `--no-final-log`; header shows the effective net-split |
-
-Only v6 is published. With every order except `mixed` on asymmetric splits, v6 generates the
-same rules as v5.
