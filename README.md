@@ -77,7 +77,3 @@ sigma_collector zero → run-redial.sh (listen-redial.sh + sendpkts) → sigma_c
 - **RX clock offset:** always pass the current calibration (`--offset` / `--rx-offset-ns`). The defaults written in some scripts (`-11973`, `0`) are outdated; the last value used in the thesis is −11764 ns.
 - **Passwords and keys are not in the repo.** The REDIAL scripts read the SSH/sudo password from an external file (`PASS_FILE`), which must never be committed.
 - The code is kept **identical to the version used for the thesis**. Testbed-specific values are documented in each README instead of being moved to a config file.
-
-## License
-
-To be defined.
