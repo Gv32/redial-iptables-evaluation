@@ -33,7 +33,7 @@ This repository contains **code only**. Captures (pcap), rulesets, measurement r
 | --- | --- | --- |
 | [`tools/gen-fw-rules`](tools/gen-fw-rules) | Generates the firewall rulesets (`gen_fw_rules_v6.py`) | any |
 | [`tools/gen-packets`](tools/gen-packets) | Generates the packet vectors that match the ruleset (`gen_packets_v2.py`) | any |
-| [`tools/namespace`](tools/namespace) | Creates the namespaces and interfaces of the testbed | TS-P5 |
+| [`tools/namespace`](tools/namespaces) | Creates the namespaces and interfaces of the testbed | TS-P5 |
 | [`tools/load-fw`](tools/load-fw) | Loads a ruleset on the firewall | TS-P5 |
 | [`tools/sendpkts`](tools/sendpkts) | C traffic generator: replays the vectors with a net1/net2 split and a rate ramp | TS-P5 |
 | [`tools/udpramp`](tools/udpramp) | C single-flow UDP generator with a rate ramp (probe for the h sweep) | TS-P5 |
