@@ -1,48 +1,29 @@
 """
-redial_v5.py — REDIAL allineato a Durante et al., TIFS 2021, esteso al
-match per interfaccia di ingresso sul salto fw2,i^.FORWARD → REDIAL_A_<j>.
+redial_v5.2.py — REDIAL allineato a Durante et al., TIFS 2021.
 
-Differenze rispetto a redial_v4.py (★ = punto di modifica):
+Unione di due linee di fix che erano rimaste su rami separati:
 
-  ★ AGGIUNTO    parametro `fw2_upstream_ifaces`: lista parallela a
-                fw2_list. Ogni elemento è il nome dell'interfaccia
-                (dentro la netns di fw2,j) attraverso cui arriva il
-                traffico da fw1. Se None per un dato j, si torna al
-                vecchio comportamento (match per -s d0).
+  ★ da redial_v5:   salto fw2,i^.FORWARD → REDIAL_A_<j> con match per
+                    interfaccia di ingresso (-i <iface>) invece che per
+                    sorgente (-s d0): cattura TUTTO il traffico che ha
+                    attraversato fw1, anche da sorgenti ≠ d0 (es. dn).
+                    Opt-in: se fw2_upstream_ifaces è None, torna al -s d0.
 
-  ★ MODIFICATO  la Rule che genera il salto fw2,i^.FORWARD → REDIAL_A_<j>
-                ora preferisce `in_iface=<iface>` a `src=d0`. Questo
-                elimina il gap di sicurezza quando sorgenti diverse da
-                d0 (es. d_n) attraversano fw1: il match per interfaccia
-                cattura *tutto* il traffico transitato da fw1, qualunque
-                sia la sua source IP, mentre traffico intra-foglia
-                (d2,j → d2,i, entra da un'altra iface) salta correttamente
-                il blocco A.
+  ★ da redial_v4.2: decide_inheritance() ritorna SEMPRE (True, True).
+                    L'ottimizzazione per-policy di v3/v4/v5 ("se la default
+                    di fw2 copre già una classe, non spostarla") viola il
+                    first-match-wins — vedi il docstring della funzione.
 
-  ★ INVARIATO   tutto il resto: shortcut su fw1^, gestione D^N_{K+1},
-                trasformazioni ACCEPT→RETURN e DENY→DROP/REJECT,
-                decide_inheritance() sui 4 casi di default policy,
-                supporto target non-terminanti (LOG/MARK/...) con
-                log_strategy.
+Punti fermi (invariati):
+  - shortcut -d d2,j -j ACCEPT in fw1^, inserita alla prima regola spostata;
+  - ACCEPT ereditate → -j RETURN dentro REDIAL_A_<j>;
+  - DENY ereditate   → -j DROP / REJECT;
+  - target non-terminanti (LOG, MARK, ...) con log_strategy ∈ {move, keep, duplicate};
+  - niente Translation Table, niente goto numerici: output 100%
+    iptables-restore-compatibile.
 
-Garanzie semantiche (estensione della v4):
-
-  Pacchetto da d0 (passa per fw1, arriva su fw2 via veth-fw2-up):
-    fw1^   → matcha shortcut -d d2,i → ACCEPT
-    fw2,i^ → -i veth-fw2-up matcha → entra in REDIAL_A_<i> → stesso
-             verdetto della v4 (DROP/REJECT diretto, oppure RETURN →
-             blocco B).
-
-  Pacchetto da dn (es. 10.0.1.0/24) che attraversa fw1 verso d2,i:
-    fw1^   → matcha shortcut -d d2,i → ACCEPT (come prima)
-    fw2,i^ → -i veth-fw2-up matcha lo stesso (perché arriva da fw1
-             indipendentemente dalla source) → entra in REDIAL_A_<i> →
-             stesso filtraggio che applicava fw1 originale. ✓ GAP FIX
-
-  Pacchetto intra-foglia d2,j → d2,i (NON passa per fw1):
-    fw2,i^ → entra da un'iface diversa (es. veth-fw2-d2j) → -i
-             veth-fw2-up NON matcha → salta REDIAL_A_<i> → blocco B.
-             Stesso comportamento del paper.
+Dipendenza: RedialUtils.py v4.2 (campo `in_iface` su Rule + emit `-i <iface>`
+nel serializer). Codice completo nella pagina del fix v5.
 """
 
 import ipaddress
@@ -92,16 +73,32 @@ def get_forward_policy(fw: Firewall) -> str:
 
 
 def decide_inheritance(fw1_policy: str, fw2_policy: str) -> Tuple[bool, bool]:
-    f1 = _norm(fw1_policy)
-    f2 = _norm(fw2_policy)
-    if f1 == "DROP" and f2 == "ACCEPT":
-        return (False, True)
-    if f1 == "DROP" and f2 == "DROP":
-        return (True, True)
-    if f1 == "ACCEPT" and f2 == "DROP":
-        return (True, True)
-    if f1 == "ACCEPT" and f2 == "ACCEPT":
-        return (False, True)
+    """
+    ★ da v4.2: si DEVONO sempre spostare sia ACCEPT che DENY.
+
+    L'ottimizzazione di v3/v4/v5 "se la default policy di fw2 copre già
+    una delle due classi, non spostarla" è semanticamente errata perché
+    iptables applica first-match-wins e l'ordine relativo delle regole
+    ACCEPT/DENY in fw1 è significativo. Esempio:
+
+        -A FORWARD -s 10.0.0.5 -j ACCEPT        ← eccezione esplicita
+        -A FORWARD -s 10.0.0.0/24 -j DROP
+        default: DROP
+
+    fw1 originale: il pacchetto da 10.0.0.5 viene ACCETTATO dalla prima
+    regola; le successive non lo riguardano.
+
+    Con la logica a 4 casi (fw2 default = ACCEPT → move_accept = False),
+    in REDIAL_A_<j> finisce SOLO la regola DROP -s 10.0.0.0/24 → il
+    pacchetto da 10.0.0.5 viene erroneamente droppato.
+
+    Simmetricamente, omettere le DENY nel caso (ACCEPT, ACCEPT) può
+    trasformare un DROP specifico in un ACCEPT (perché l'ACCEPT di
+    subnet che lo precedeva continua ad esserci, e l'unico filtro che
+    lo droppava è stato omesso).
+
+    L'unica scelta sicura è spostare sempre entrambe le classi.
+    """
     return (True, True)
 
 
@@ -115,7 +112,7 @@ def _make_custom_chain(name: str) -> ChainDef:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Algoritmo REDIAL — v5
+# Algoritmo REDIAL — v5.2
 # ──────────────────────────────────────────────────────────────────────
 
 def redial(
@@ -126,17 +123,13 @@ def redial(
     dn: List[ipaddress.IPv4Network],
     custom_chain_prefix: str = "REDIAL_A_",
     log_strategy: Literal["move", "keep", "duplicate"] = "move",
-    fw2_upstream_ifaces: Optional[List[Optional[str]]] = None,        # ★ NEW
+    fw2_upstream_ifaces: Optional[List[Optional[str]]] = None,        # ★ da v5
 ):
     """
-    Applica REDIAL con codifica iptables fedele al paper, esteso al
-    match per interfaccia sul salto REDIAL_A_<j>.
-
-    Nuovo parametro rispetto a v4:
-      fw2_upstream_ifaces : list parallela a fw2_list. Ogni elemento è
-        il nome dell'interfaccia (es. "veth-fw2-up") da cui arriva su
-        fw2,j il traffico che ha attraversato fw1. Se None per un dato
-        j (o se l'intera lista è None), si torna al match -s d0.
+    fw2_upstream_ifaces : lista parallela a fw2_list. Ogni elemento è il
+      nome dell'interfaccia (es. "veth-fw2-up") da cui arriva su fw2,j
+      il traffico che ha attraversato fw1. Se None per un dato j (o se
+      l'intera lista è None), si torna al match -s d0.
     """
     K = len(d2_list)
     assert len(fw2_list) == K, "fw2_list e d2_list devono avere la stessa lunghezza"
@@ -157,7 +150,7 @@ def redial(
     orig_table = fw1.tables[0]
     fw1_policy = get_forward_policy(fw1)
 
-    # ─── Costruzione di fw1^ + raccolta delle regole ereditate ─────────
+    # ─── Costruzione di fw1^ + raccolta delle regole ereditate ────────
     fw1_new = Table(star="*", table_name=orig_table.table_name)
     fw1_new.chain_defs = deepcopy(orig_table.chain_defs)
 
@@ -193,13 +186,13 @@ def redial(
 
     fw1_hat.tables.append(fw1_new)
 
-    # ─── Costruzione di ciascun fw2,i^ ─────────────────────────────────
+    # ─── Costruzione di ciascun fw2,i^ ────────────────────────────────
     for j in range(K):
         orig_fw2 = fw2_list[j]
         orig_fw2_tbl = orig_fw2.tables[0] if orig_fw2.tables else None
         fw2_policy = get_forward_policy(orig_fw2)
         move_accept, move_deny = decide_inheritance(fw1_policy, fw2_policy)
-        upstream_iface = (fw2_upstream_ifaces[j] or "").strip() or None  # ★ NEW
+        upstream_iface = (fw2_upstream_ifaces[j] or "").strip() or None  # ★ da v5
 
         new_tbl = Table(star="*", table_name=orig_table.table_name)
         if orig_fw2_tbl is not None:
@@ -207,7 +200,7 @@ def redial(
         chain_name = f"{custom_chain_prefix}{j}"
         new_tbl.chain_defs.append(_make_custom_chain(chain_name))
 
-        # ── Blocco A — catena custom REDIAL_A_<j> ──────────────────────
+        # ── Blocco A — catena custom REDIAL_A_<j> ─────────────────────
         for r in inherited[j]:
             if _is_nonterminating(r.action):
                 new_r = deepcopy(r)
@@ -235,9 +228,9 @@ def redial(
                 new_tbl.rules.append(new_r)
                 continue
 
-        # ── Salto FORWARD → REDIAL_A_<j> ─────────────────────────────
-        # ★ FIX: usa -i upstream_iface se fornita (topology-agnostic),
-        # altrimenti fallback al vecchio -s d0.
+        # ── Salto FORWARD → REDIAL_A_<j> ──────────────────────────────
+        # ★ da v5: -i upstream_iface se fornita (topology-agnostic),
+        #   altrimenti fallback al vecchio -s d0.
         if upstream_iface is not None:
             jump_rule = Rule(
                 chain="FORWARD",
@@ -257,7 +250,7 @@ def redial(
             )
         new_tbl.rules.append(jump_rule)
 
-        # ── Blocco B — regole originali di fw2,i, verbatim ───────────
+        # ── Blocco B — regole originali di fw2,i, verbatim ────────────
         if orig_fw2_tbl is not None:
             for r in orig_fw2_tbl.rules:
                 new_tbl.rules.append(deepcopy(r))
@@ -283,8 +276,6 @@ if __name__ == "__main__":
     d2_list = [ipaddress.IPv4Network("10.0.2.0/24", strict=False)]
     dn = [ipaddress.IPv4Network("10.0.1.0/24", strict=False)]
 
-    # ★ Topology-agnostic: passa il nome dell'interfaccia di fw2 verso fw1.
-    # Se non sai ancora il nome, lascia None: si torna al vecchio comportamento.
     fw1_hat, fw2_hat = redial(
         fw1, fw2_list, d2_list, d0, dn,
         log_strategy="move",
